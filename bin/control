@@ -1,0 +1,313 @@
+#!/bin/bash -eu
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+function build {
+    if [[ -d $OPENSHIFT_TMP_DIR/node_modules && ! -e $OPENSHIFT_REPO_DIR/node_modules ]]; then
+        mv $OPENSHIFT_TMP_DIR/node_modules $OPENSHIFT_REPO_DIR/node_modules
+    fi
+
+    return 0
+}
+
+function deploy {
+    if [[ -f $OPENSHIFT_REPO_DIR/package.json ]]; then
+        npm_install &
+        echo $! > $OPENSHIFT_TMP_DIR/npm.pid
+        client_message '"npm install" is running in the background, pm2 will restart after it finishes'
+    fi
+
+    return 0
+}
+
+function kill_process {
+    kill -$1 $2 2> /dev/null
+
+    for timer in {1..60}; do
+        if ! kill -0 $2 2> /dev/null; then
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    return 1
+}
+
+function logrotate {
+    local logrotate_pid=$OPENSHIFT_NODE_DIR/usr/var/lib/logrotate.pid
+
+    if [[ 'stop' = "${1-}" ]]; then
+        local pid=$(cat $logrotate_pid 2> /dev/null)
+
+        if [[ ! -z $pid ]]; then
+            kill $pid
+            rm -f $logrotate_pid
+        fi
+
+        return 0
+    elif [[ -f $logrotate_pid ]]; then
+        logrotate stop
+        rm -f $logrotate_pid
+    fi
+
+    while /bin/true; do
+        /usr/sbin/logrotate --state $OPENSHIFT_NODE_DIR/usr/var/lib/logrotate.status $OPENSHIFT_NODE_DIR/usr/etc/logrotate.conf
+
+        local midnight=$(date --date='tomorrow 00:00:00' "+%s")
+        local now=$(date "+%s")
+
+        sleep $((midnight - now))
+    done &
+
+    echo $! > $logrotate_pid
+
+    return 0
+}
+
+function nginx_is_running {
+    local nginx_pid=$OPENSHIFT_NODE_DIR/usr/run/nginx.pid
+
+    if [[ ! -f $nginx_pid ]]; then
+        return 1
+    fi
+
+    local pid=$(cat $nginx_pid 2> /dev/null)
+
+    if [[ -z $pid ]] || ! process_running 'nginx' $pid; then
+        rm -f $nginx_pid
+        return 1
+    fi
+
+    return 0
+}
+
+function npm_install {
+    cd $OPENSHIFT_REPO_DIR
+
+    if [[ -d ./node_modules ]]; then
+        local npm_command='update'
+    else
+        local npm_command='install'
+    fi
+
+    if npm $npm_command -d >> $OPENSHIFT_LOG_DIR/npm-output.log 2>&1; then
+        rm -f $OPENSHIFT_TMP_DIR/npm.pid
+    fi
+
+    if [[ -f ./npm-debug.log ]]; then
+        cat ./npm-debug.log >> $OPENSHIFT_LOG_DIR/npm-debug.log
+        rm -f ./npm-debug.log
+    fi
+
+    start
+}
+
+function pm2_is_running {
+    local pm2_pid=$PM2_HOME/pm2.pid
+
+    if [[ ! -f $pm2_pid ]]; then
+        return 1
+    fi
+
+    local pid=$(cat $pm2_pid 2> /dev/null)
+
+    if [[ -z $pid ]] || ! process_running 'PM2|pm2' $pid; then
+        rm -f $pm2_pid
+        return 1
+    fi
+
+    return 0
+}
+
+function pm2_stop {
+    local pm2_pid=$(cat $PM2_HOME/pm2.pid 2> /dev/null)
+
+    if ! ( kill_process TERM $pm2_pid || kill_process INT $pm2_pid || kill_process QUIT $pm2_pid || kill_process KILL $pm2_pid ); then
+        return 1
+    fi
+
+    return 0
+}
+
+function pre-repo-archive {
+    if hot_deploy_enabled_for_latest_deployment && pm2_is_running; then
+        pm2_stop
+    fi
+
+    if force_clean_build_enabled_for_latest_deployment; then
+        rm -rf $OPENSHIFT_TMP_DIR/node_modules
+        npm cache clean
+    elif [[ -d $OPENSHIFT_REPO_DIR/node_modules ]]; then
+        mv $OPENSHIFT_REPO_DIR/node_modules $OPENSHIFT_TMP_DIR/node_modules
+    fi
+}
+
+function process_running {
+    for process_id in $(pgrep -f $1); do
+        if [[ "$2" = "$process_id" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+function reload {
+    local stopped=false
+
+    if nginx_is_running || pm2_is_running; then
+        if ! stop; then
+            client_error 'Failed to stop for reload'
+            return 1
+        fi
+        stopped=true
+    fi
+
+    erb $OPENSHIFT_NODE_DIR/conf/process.yml.erb > $PM2_HOME/process.yml
+    rm -rf $OPENSHIFT_NODE_DIR/usr/html
+    cp -R $OPENSHIFT_NODE_DIR/html $OPENSHIFT_NODE_DIR/usr/html
+    erb $OPENSHIFT_NODE_DIR/conf/nginx.conf.erb > $OPENSHIFT_NODE_DIR/usr/conf/nginx.conf
+
+    if $stopped; then
+        if ! start; then
+            client_error 'Failed to start after reload'
+            return 1
+        fi
+    fi
+
+    client_result 'Reloaded'
+    return 0
+}
+
+function restart {
+    if ( ( nginx_is_running || pm2_is_running ) && ! stop ) || ! start; then
+        client_error 'Failed to restart'
+        return 1
+    fi
+
+    client_result 'Restarted'
+    return 0
+}
+
+function start {
+    local npm_pid=$OPENSHIFT_TMP_DIR/npm.pid
+
+    if pm2_is_running; then
+        client_result 'pm2 is already running'
+    elif [[ -f $npm_pid ]]; then
+        if ! kill -0 $(cat $npm_pid 2> /dev/null) 2> /dev/null; then
+            client_result 'pm2 cannot start, "npm install" failed to finish'
+        else
+            client_result 'pm2 is waiting for "npm install" to finish'
+        fi
+    elif pm2 start $PM2_HOME/process.yml; then
+        client_result 'pm2 started'
+    else
+        client_error 'pm2 failed to start'
+        return 1
+    fi
+
+    if nginx_is_running; then
+        client_result 'nginx is already running'
+    elif nginx; then
+        client_result 'nginx started'
+    else
+        client_error 'nginx failed to start'
+        return 1
+    fi
+
+    logrotate
+
+    return 0
+}
+
+function status {
+    if nginx_is_running; then
+        client_result 'nginx is running'
+    else
+        client_result 'nginx is not running'
+    fi
+
+    local npm_pid=$OPENSHIFT_TMP_DIR/npm.pid
+
+    if pm2_is_running; then
+        client_result 'pm2 is running'
+    elif [[ -f $npm_pid ]]; then
+        if ! kill -0 $(cat $npm_pid 2> /dev/null) 2> /dev/null; then
+            client_result 'pm2 is disabled, "npm install" failed to finish'
+        else
+            client_result 'pm2 is waiting for "npm install" to finish'
+        fi
+    else
+        client_result 'pm2 is not running'
+    fi
+
+    return 0
+}
+
+function stop {
+    if ! nginx_is_running; then
+        client_result 'nginx is already stopped'
+    else
+        local nginx_pid=$(cat $OPENSHIFT_NODE_DIR/usr/run/nginx.pid 2> /dev/null)
+        if kill_process TERM $nginx_pid || kill_process INT $nginx_pid || kill_process QUIT $nginx_pid || kill_process KILL $nginx_pid; then
+            client_result 'nginx stopped'
+        else
+            client_error 'nginx failed to stop'
+            return 1
+        fi
+    fi
+
+    if ! pm2_is_running; then
+        client_result 'pm2 is already stopped'
+    elif pm2_stop; then
+        client_result 'pm2 stopped'
+    else
+        client_error 'pm2 failed to stop'
+        return 1
+    fi
+
+    logrotate stop
+
+    return 0
+}
+
+function tidy {
+    local paused=false
+
+    if nginx_is_running; then
+        nginx -s stop
+        paused=true
+    fi
+
+    rm -rf $OPENSHIFT_TMP_DIR/nginx*
+    rm -rf $OPENSHIFT_TMP_DIR/npm*
+    rm -rf $OPENSHIFT_LOG_DIR/nginx*
+    rm -rf $OPENSHIFT_LOG_DIR/npm*
+    rm -rf $OPENSHIFT_LOG_DIR/pm2*
+    rm -rf $npm_config_cache
+
+    npm cache clean
+
+    mkdir -p $OPENSHIFT_TMP_DIR/nginx/cache
+
+    if $paused; then
+        nginx -s reopen
+    fi
+
+    client_result 'Cleaned'
+    return 0
+}
+
+case $1 in
+    build) build;;
+    deploy) deploy;;
+    pre-repo-archive) pre-repo-archive;;
+    reload) reload;;
+    restart) restart;;
+    start) start;;
+    status) status;;
+    stop) stop;;
+    tidy) tidy;;
+    *) exit 0;;
+esac

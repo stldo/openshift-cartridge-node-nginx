@@ -1,0 +1,12 @@
+#!/bin/bash -eu
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+# Clean files
+
+rm -rf $OPENSHIFT_TMP_DIR/node-*
+rm -rf $OPENSHIFT_TMP_DIR/nginx-*
+
+# Show success message to the user
+
+client_result 'Node.js '${OPENSHIFT_NODE_VERSION}' successfully added!'

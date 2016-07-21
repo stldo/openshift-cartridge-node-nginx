@@ -1,0 +1,31 @@
+#!/bin/bash -eu
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+# Install pm2 and update npm
+
+echo 'Configuring Node.js'
+
+mkdir -p $(dirname $NODE_SOCKET)
+chmod 0700 $(dirname $NODE_SOCKET)
+
+npm -g install pm2
+
+mkdir -p $PM2_HOME
+
+erb $OPENSHIFT_NODE_DIR/conf/process.yml.erb > $PM2_HOME/process.yml
+
+# Configure nginx
+
+echo 'Configuring nginx'
+
+rm -rf $OPENSHIFT_NODE_DIR/usr/html
+mkdir -p $OPENSHIFT_TMP_DIR/nginx/cache
+
+cp -R $OPENSHIFT_NODE_DIR/html $OPENSHIFT_NODE_DIR/usr/html
+erb $OPENSHIFT_NODE_DIR/conf/nginx.conf.erb > $OPENSHIFT_NODE_DIR/usr/conf/nginx.conf
+
+# Configure logrotate
+
+mkdir -p $OPENSHIFT_NODE_DIR/usr/etc $OPENSHIFT_NODE_DIR/usr/var/lib
+erb $OPENSHIFT_NODE_DIR/conf/logrotate.conf.erb > $OPENSHIFT_NODE_DIR/usr/etc/logrotate.conf

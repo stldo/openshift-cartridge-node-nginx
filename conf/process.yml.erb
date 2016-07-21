@@ -1,0 +1,10 @@
+---
+apps:
+    - script: <%= ENV['OPENSHIFT_REPO_DIR'] %>/index.js
+      cwd: <%= ENV['OPENSHIFT_REPO_DIR'] %>
+      exec_mode: cluster
+      instances: 1
+      log_date_format: 'YYYY-MM-DD HH:mm:ss.SSS Z'
+      max_memory_restart: '512M'
+      error_file: <%= ENV['OPENSHIFT_LOG_DIR'] %>/pm2-error.log
+      out_file: <%= ENV['OPENSHIFT_LOG_DIR'] %>/pm2-output.log

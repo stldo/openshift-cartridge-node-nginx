@@ -1,0 +1,99 @@
+worker_processes            1;
+worker_rlimit_nofile        8192;
+
+events {
+    # We're using just one worker process, so let it accept more than one connection at a time
+    multi_accept                  on;
+
+    # If your application demands a higher value, most likely you'll not be using this cartridge
+    worker_connections            8096;
+}
+
+http {
+    etag                        off;
+
+    # This gzip configuration is a bit aggressive, set it at your own taste
+    gzip                        on;
+    gzip_comp_level             5;
+    gzip_min_length             0;
+    gzip_types                  *;
+
+    # http://maxcdnblog.wpengine.com/accept-encoding-its-vary-important
+    gzip_vary                   on;
+
+    # use_temp_path=off                      - http://www.nginx.com/blog/nginx-caching-guide
+    # keys_zone=cache_key:4m / max_size=512m - Four megabytes can store up to 32 thousand keys, so
+    #                                          for an average of 25 kilobytes per cached resource,
+    #                                          it's more than sufficient for a max_size of 512
+    #                                          megabytes (a basic OpenShift gear has one gigabyte
+    #                                          of storage, use a reasonable max_size value)
+    # inactive=24h                           - A sensible value for small applications that will
+    #                                          hardly ever reach 32 thousand cache keys
+    proxy_cache_path            <%= ENV['OPENSHIFT_TMP_DIR'] %>/nginx/cache levels=1:2 use_temp_path=off keys_zone=cache_key:2m inactive=24h max_size=512m;
+
+    # Ensure that request.headers always have a valid host property in Node.js
+    proxy_set_header            Host $host;
+
+    # If nginx is outdated, it's better to hide it from the public
+    server_tokens               off;
+
+    # Set Connection header for a WebSocket connection
+    map $http_upgrade $connection_upgrade {
+        default                     upgrade;
+        ''                          close;
+    }
+
+    server {
+        error_page                  502 @down;
+        listen                      <%= ENV['OPENSHIFT_NODE_IP'] %>:<%= ENV['OPENSHIFT_NODE_PORT'] %>;
+        proxy_cache                 cache_key;
+
+        # Useful for checking a recently modified resource, i.e. a blog post. Feel free to
+        # use another value instead of "cache_bypass". You can use a bookmarklet to reload
+        # the page while disabling the cache, like the following:
+        #
+        # javascript:(function(){document.cookie="cache_bypass=1";location.reload(true)}())
+        #
+        # The proxy_hide_header option below removes the cookie value from the response
+        proxy_cache_bypass          $cookie_cache_bypass;
+
+        # The default value is "$scheme$proxy_host$request_uri", using $host is needed for
+        # applications that respond to multiple domains
+        proxy_cache_key             $scheme$host$request_uri;
+
+        # Avoid two consecutive request from hitting Node.js
+        proxy_cache_lock            on;
+
+        # Give plenty of time for time consuming requests, like image processing/optimization
+        proxy_cache_lock_age        1m;
+        proxy_cache_lock_timeout    1m;
+
+        proxy_cache_use_stale       error timeout invalid_header updating http_500;
+        proxy_cache_valid           301 1h;
+        proxy_cache_valid           200 302 10m;
+        proxy_cache_valid           any 1m;
+
+        # This cartridge is designed for small applications, where static and dynamic content often
+        # shares the same hostname, so allow requests with cookies to be cached — also remove them
+        # before caching
+        proxy_hide_header           Set-Cookie;
+        proxy_ignore_headers        Set-Cookie;
+
+        location / {
+            # Send all requests to Node.js
+            proxy_pass                  http://unix:<%= ENV['NODE_SOCKET'] %>;
+
+            # Required by WebSocket
+            proxy_http_version          1.1;
+
+            # Set WebSocket headers (depending on $http_upgrade and $connection_upgrade values)
+            proxy_set_header            Upgrade $http_upgrade;
+            proxy_set_header            Connection $connection_upgrade;
+        }
+
+        location @down {
+            # If $OPENSHIFT_NODE_DIR/html/502 could not be found, return a 500 error
+            try_files                   /502 =500;
+        }
+    }
+}

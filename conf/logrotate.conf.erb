@@ -1,0 +1,6 @@
+<%= ENV['OPENSHIFT_LOG_DIR'] %>/*.log {
+    copytruncate
+    missingok
+    rotate 7
+    size 1M
+}

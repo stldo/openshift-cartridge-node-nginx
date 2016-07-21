@@ -1,0 +1,11 @@
+---
+locked_files:
+    - bin/*
+    - env/*
+    - html/*
+    - html
+setup_rewritten:
+    - conf/*
+    - env/*
+    - html
+    - template

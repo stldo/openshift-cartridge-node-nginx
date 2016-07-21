@@ -1,0 +1,86 @@
+#!/bin/bash -eu
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+cd $OPENSHIFT_TMP_DIR
+
+# Set versions
+
+if [[ -z ${OPENSHIFT_NODE_VERSION:-} ]]; then
+    case $1 in -v|--version) OPENSHIFT_NODE_VERSION=$2;; esac
+fi
+
+nginx_version="$(curl --silent --max-time 7 https://semver.io/nginx/stable)"
+
+if ! echo ${OPENSHIFT_NODE_VERSION-} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' &> /dev/null; then
+    client_error 'Invalid Node.js version: '$OPENSHIFT_NODE_VERSION
+    return 1
+elif [[ -z $nginx_version ]]; then
+    client_error 'Failed to retrive latest nginx stable version'
+    return 1
+fi
+
+# Download and unpack Node.js
+
+echo 'Downloading Node.js '$OPENSHIFT_NODE_VERSION
+
+node_pkg=node-v$OPENSHIFT_NODE_VERSION-linux-x64
+
+if [[ ! -d $node_pkg ]]; then # If this directory exists, then a previous setup has failed
+    curl http://nodejs.org/dist/v$OPENSHIFT_NODE_VERSION/$node_pkg.tar.xz > $node_pkg.tar.xz
+    tar xJf $node_pkg.tar.xz
+    rm -f $node_pkg.tar.xz # Node.js is downloaded, ready for install
+fi
+
+# Install Node.js
+
+echo 'Installing Node.js'
+
+cp -R $node_pkg $OPENSHIFT_NODE_DIR/usr # Use Node.js dir as base for $OPENSHIFT_NODE_DIR/usr
+
+# Download, unpack and build nginx
+
+echo 'Downloading nginx '$nginx_version
+
+nginx_pkg=nginx-$nginx_version
+
+if [[ ! -d $nginx_pkg ]]; then # If this directory exists, then a previous setup has failed
+    curl http://nginx.org/download/$nginx_pkg.tar.gz > $nginx_pkg.tar.gz
+    tar xzf $nginx_pkg.tar.gz
+fi
+
+if [[ -f $nginx_pkg.tar.gz ]]; then # If this file exists, then a previous build has failed
+    echo 'Building nginx'
+
+    pushd ./$nginx_pkg
+    ./configure \
+        --without-http_rewrite_module \
+        --with-http_ssl_module \
+        --with-ipv6 \
+        --prefix=$OPENSHIFT_NODE_DIR/usr \
+        --pid-path=$OPENSHIFT_NODE_DIR/usr/run/nginx.pid \
+        --lock-path=$OPENSHIFT_NODE_DIR/usr/run/nginx.lock \
+        --error-log-path=$OPENSHIFT_LOG_DIR/nginx-error.log \
+        --http-log-path=$OPENSHIFT_LOG_DIR/nginx-http.log \
+        --http-client-body-temp-path=$OPENSHIFT_TMP_DIR/nginx/client_body_temp \
+        --http-fastcgi-temp-path=$OPENSHIFT_TMP_DIR/nginx/fastcgi_temp \
+        --http-proxy-temp-path=$OPENSHIFT_TMP_DIR/nginx/proxy_temp \
+        --http-scgi-temp-path=$OPENSHIFT_TMP_DIR/nginx/scgi_temp \
+        --http-uwsgi-temp-path=$OPENSHIFT_TMP_DIR/nginx/uwsgi_temp
+    make
+    popd
+
+    rm -f $nginx_pkg.tar.gz # nginx is downloaded and compiled, ready for install
+fi
+
+# Build and install nginx
+
+echo 'Installing nginx'
+
+cd $nginx_pkg
+
+make install
+
+# Set environment variables
+
+set_env_var 'OPENSHIFT_NODE_VERSION' $OPENSHIFT_NODE_VERSION $OPENSHIFT_NODE_DIR/env
