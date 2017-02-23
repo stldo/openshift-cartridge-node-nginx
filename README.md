@@ -1,6 +1,6 @@
 # openshift-cartridge-node-nginx
 
-A Node.js cartridge for OpenShift using nginx as a reverse proxy. It's intended for small to middle-sized applications, reducing Node.js demand—less database queries, template rendering, etc. For more information about how nginx handle the requests, look at the `conf/nginx.conf.erb` file.
+A Node.js LTS cartridge for OpenShift using nginx as a reverse proxy. It's intended for small to middle-sized applications, reducing Node.js demand—less database queries, template rendering, etc. For more information about how nginx handle the requests, look at the `conf/nginx.conf.erb` file.
 
 ## Install
 
@@ -56,4 +56,4 @@ The nginx root is located in `$OPENSHIFT_NODE_DIR/usr/html`. With the default co
 
 ## License
 
-The MIT License (MIT), © 2016 Saulo Toledo
+The MIT License (MIT), © 2017 Saulo Toledo
