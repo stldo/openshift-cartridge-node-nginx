@@ -6,12 +6,12 @@ A Node.js LTS cartridge for OpenShift using nginx as a reverse proxy. It's inten
 
 ### Create a new application through web interface
 
-[Node.js (nginx)](https://openshift.redhat.com/app/console/application_type/custom?cartridges%5B%5D=https%3A%2F%2Fraw.githubusercontent.com%2Fsbtoledo%2Fopenshift-cartridge-node-nginx%2Fmaster%2Fmetadata%2Fmanifest.yml)
+[Node.js (nginx)](https://openshift.redhat.com/app/console/application_type/custom?cartridges%5B%5D=https%3A%2F%2Fraw.githubusercontent.com%2Fstldo%2Fopenshift-cartridge-node-nginx%2Fmaster%2Fmetadata%2Fmanifest.yml)
 
 ### Create a new application through `rhc`
 
 ```bash
-rhc create-app {myAppName} https://raw.githubusercontent.com/sbtoledo/openshift-cartridge-node-nginx/master/metadata/manifest.yml
+rhc create-app {myAppName} https://raw.githubusercontent.com/stldo/openshift-cartridge-node-nginx/master/metadata/manifest.yml
 ```
 
 ## Use
@@ -56,4 +56,4 @@ The nginx root is located in `$OPENSHIFT_NODE_DIR/usr/html`. With the default co
 
 ## License
 
-The MIT License (MIT), © 2017 Saulo Toledo
+[The MIT License](./LICENSE)
